@@ -71,6 +71,8 @@ export interface IChannelSession {
  */
 export interface IChannelAssistantBindingRead {
   assistant_id?: string;
+  /** Team binding; when present the channel talks to this team instead. */
+  team_id?: string;
   /** @deprecated Legacy assistant identity written before assistant-first migration. */
   custom_agent_id?: string;
   /** @deprecated Legacy backend-only binding kept for read compatibility. */
@@ -80,8 +82,14 @@ export interface IChannelAssistantBindingRead {
   name?: string;
 }
 
+/**
+ * Channel target binding. Exactly one of `assistant_id` / `team_id` must be
+ * set; the backend rejects writes with both or neither.
+ */
 export interface IChannelAssistantBindingWrite {
-  assistant_id: string;
+  assistant_id?: string;
+  team_id?: string;
+  name?: string;
 }
 
 export interface IChannelDefaultModelSetting {

@@ -5,8 +5,10 @@
  */
 
 import type { IChannelPairingRequest, IChannelPluginStatus, IChannelUser } from '@/common/types/channel/channel';
-import { assistants, channel } from '@/common/adapter/ipcBridge';
+import { assistants, channel, team } from '@/common/adapter/ipcBridge';
 import { isAionrsAssistant, type Assistant } from '@/common/types/agent/assistantTypes';
+import type { TTeam } from '@/common/types/team/teamTypes';
+import { useAuth } from '@renderer/hooks/context/AuthContext';
 import { resolveLocaleKey } from '@/common/utils';
 import { openExternalUrl } from '@/renderer/utils/platform';
 import { resolveAssistantName } from '@/renderer/utils/model/assistantDisplay';
@@ -19,8 +21,10 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   buildChannelAssistantBinding,
+  buildChannelTeamBinding,
   getDefaultChannelAssistant,
   resolveChannelAssistantSelection,
+  resolveChannelTeamId,
 } from './assistantBinding';
 
 /**
@@ -69,6 +73,8 @@ const LARK_DEV_DOCS_URL = 'https://open.feishu.cn/document/develop-an-echo-bot/i
 const LarkConfigForm: React.FC<LarkConfigFormProps> = ({ pluginStatus, modelSelection, onStatusChange }) => {
   const { t, i18n } = useTranslation();
   const localeKey = resolveLocaleKey(i18n?.language ?? 'en-US');
+  const { user } = useAuth();
+  const teamListUserId = user?.id ?? 'system_default_user';
 
   // Lark credentials
   const [appId, setAppId] = useState('');
@@ -88,6 +94,9 @@ const LarkConfigForm: React.FC<LarkConfigFormProps> = ({ pluginStatus, modelSele
   const [availableAssistants, setAvailableAssistants] = useState<Assistant[]>([]);
   const [selectedAssistant, setSelectedAssistant] = useState<Assistant | null>(null);
   const [hasBrokenSavedAssistant, setHasBrokenSavedAssistant] = useState(false);
+  const [availableTeams, setAvailableTeams] = useState<TTeam[]>([]);
+  const [selectedTeam, setSelectedTeam] = useState<TTeam | null>(null);
+  const [hasBrokenSavedTeam, setHasBrokenSavedTeam] = useState(false);
 
   // Load pending pairings
   const loadPendingPairings = useCallback(async () => {
@@ -127,16 +136,34 @@ const LarkConfigForm: React.FC<LarkConfigFormProps> = ({ pluginStatus, modelSele
     void loadAuthorizedUsers();
   }, [loadPendingPairings, loadAuthorizedUsers]);
 
-  // Load available assistants + saved selection
+  // Load available assistants + teams + saved selection
   useEffect(() => {
     const loadAssistantsAndSelection = async () => {
       try {
-        const [assistantList, saved] = await Promise.all([
+        const [assistantList, teamList, saved] = await Promise.all([
           assistants.list.invoke(),
+          team.list.invoke({ user_id: teamListUserId }).catch(() => [] as TTeam[]),
           channel.getPlatformSettings.invoke({ platform: 'lark' }),
         ]);
 
         setAvailableAssistants(assistantList);
+        setAvailableTeams(teamList ?? []);
+
+        const savedTeamId = resolveChannelTeamId(saved.assistant ?? undefined);
+        const savedTeam = savedTeamId ? (teamList ?? []).find((item) => item.id === savedTeamId) : undefined;
+
+        if (savedTeamId) {
+          // Team binding: never fall back to an assistant when the team is
+          // missing; surface the broken binding instead of silently switching.
+          setSelectedTeam(savedTeam ?? null);
+          setSelectedAssistant(null);
+          setHasBrokenSavedTeam(!savedTeam);
+          setHasBrokenSavedAssistant(false);
+          return;
+        }
+
+        setSelectedTeam(null);
+        setHasBrokenSavedTeam(false);
 
         const selection = resolveChannelAssistantSelection(saved.assistant ?? undefined, assistantList);
         const nextAssistant =
@@ -152,7 +179,7 @@ const LarkConfigForm: React.FC<LarkConfigFormProps> = ({ pluginStatus, modelSele
     };
 
     void loadAssistantsAndSelection();
-  }, []);
+  }, [teamListUserId]);
 
   const persistSelectedAssistant = async (assistant: Assistant) => {
     try {
@@ -163,6 +190,19 @@ const LarkConfigForm: React.FC<LarkConfigFormProps> = ({ pluginStatus, modelSele
       Message.success(t('settings.assistant.agentSwitched', 'Assistant switched successfully'));
     } catch (error) {
       console.error('[LarkConfig] Failed to save assistant:', error);
+      Message.error(t('common.saveFailed', 'Failed to save'));
+    }
+  };
+
+  const persistSelectedTeam = async (nextTeam: TTeam) => {
+    try {
+      await channel.setAssistantSetting.invoke({
+        platform: 'lark',
+        assistant: buildChannelTeamBinding(nextTeam),
+      });
+      Message.success(t('settings.assistant.teamSwitched', 'Team switched successfully'));
+    } catch (error) {
+      console.error('[LarkConfig] Failed to save team:', error);
       Message.error(t('common.saveFailed', 'Failed to save'));
     }
   };
@@ -321,11 +361,13 @@ const LarkConfigForm: React.FC<LarkConfigFormProps> = ({ pluginStatus, modelSele
   };
 
   const hasExistingUsers = authorizedUsers.length > 0;
-  const showModelSelector = isAionrsAssistant(selectedAssistant);
+  const showModelSelector = !selectedTeam && isAionrsAssistant(selectedAssistant);
   const assistantOptions = availableAssistants;
-  const selectedAssistantName = selectedAssistant
-    ? resolveAssistantName(selectedAssistant, localeKey, selectedAssistant.name)
-    : t('settings.assistant.name', 'Assistant');
+  const selectedTargetName = selectedTeam
+    ? selectedTeam.name
+    : selectedAssistant
+      ? resolveAssistantName(selectedAssistant, localeKey, selectedAssistant.name)
+      : t('settings.assistant.name', 'Assistant');
 
   return (
     <div className='flex flex-col gap-24px'>
@@ -591,6 +633,11 @@ const LarkConfigForm: React.FC<LarkConfigFormProps> = ({ pluginStatus, modelSele
                   )}
                 </span>
               )}
+              {hasBrokenSavedTeam && (
+                <span className='text-orange-6'>
+                  {t('settings.assistant.selectedTeamMissing', 'The selected team is no longer available')}
+                </span>
+              )}
             </div>
           }
         >
@@ -598,17 +645,27 @@ const LarkConfigForm: React.FC<LarkConfigFormProps> = ({ pluginStatus, modelSele
             trigger='click'
             position='br'
             droplist={
-              <Menu selectedKeys={selectedAssistant ? [selectedAssistant.id] : []}>
+              <Menu
+                selectedKeys={
+                  selectedTeam
+                    ? [`team:${selectedTeam.id}`]
+                    : selectedAssistant
+                      ? [selectedAssistant.id]
+                      : []
+                }
+              >
                 {assistantOptions.map((assistant) => {
                   const assistantName = resolveAssistantName(assistant, localeKey, assistant.name);
                   return (
                     <Menu.Item
                       key={assistant.id}
                       onClick={() => {
-                        if (assistant.id === selectedAssistant?.id) {
+                        if (assistant.id === selectedAssistant?.id && !selectedTeam) {
                           return;
                         }
                         setHasBrokenSavedAssistant(false);
+                        setHasBrokenSavedTeam(false);
+                        setSelectedTeam(null);
                         setSelectedAssistant(assistant);
                         void persistSelectedAssistant(assistant);
 
@@ -630,33 +687,56 @@ const LarkConfigForm: React.FC<LarkConfigFormProps> = ({ pluginStatus, modelSele
                     </Menu.Item>
                   );
                 })}
+                {availableTeams.length > 0 && (
+                  <Menu.ItemGroup title={t('settings.assistant.teams', 'Teams')}>
+                    {availableTeams.map((teamOption) => (
+                      <Menu.Item
+                        key={`team:${teamOption.id}`}
+                        onClick={() => {
+                          if (teamOption.id === selectedTeam?.id) {
+                            return;
+                          }
+                          setHasBrokenSavedAssistant(false);
+                          setHasBrokenSavedTeam(false);
+                          setSelectedAssistant(null);
+                          setSelectedTeam(teamOption);
+                          void persistSelectedTeam(teamOption);
+                        }}
+                      >
+                        {teamOption.name}
+                      </Menu.Item>
+                    ))}
+                  </Menu.ItemGroup>
+                )}
               </Menu>
             }
           >
             <Button type='secondary' className='min-w-160px flex items-center justify-between gap-8px'>
-              <span className='truncate'>{selectedAssistantName}</span>
+              <span className='truncate'>{selectedTargetName}</span>
               <Down theme='outline' size={14} />
             </Button>
           </Dropdown>
         </PreferenceRow>
       </div>
 
-      {/* Default Model Selection */}
-      <PreferenceRow
-        label={t('settings.assistant.defaultModel', 'Default Model')}
-        description={t('settings.lark.defaultModelDesc', 'Model used for Lark conversations')}
-      >
-        <GoogleModelSelector
-          selection={showModelSelector ? modelSelection : undefined}
-          disabled={!showModelSelector}
-          label={
-            !showModelSelector
-              ? t('settings.assistant.autoFollowCliModel', 'Automatically follow the model when CLI is running')
-              : undefined
-          }
-          variant='settings'
-        />
-      </PreferenceRow>
+      {/* Default Model Selection — teams use their own per-member models. */}
+      {!selectedTeam && (
+        <PreferenceRow
+          label={t('settings.assistant.defaultModel', 'Default Model')}
+          description={t('settings.lark.defaultModelDesc', 'Model used for Lark conversations')}
+        >
+          <GoogleModelSelector
+            selection={showModelSelector ? modelSelection : undefined}
+            disabled={!showModelSelector}
+            label={
+              !showModelSelector
+                ? t('settings.assistant.autoFollowCliModel', 'Automatically follow the model when CLI is running')
+                : undefined
+            }
+            variant='settings'
+          />
+        </PreferenceRow>
+      )}
 
       {/* Connection Status - show when bot is enabled */}
       {pluginStatus?.enabled && authorizedUsers.length === 0 && (

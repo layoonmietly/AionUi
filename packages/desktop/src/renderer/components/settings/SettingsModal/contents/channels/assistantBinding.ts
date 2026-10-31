@@ -43,6 +43,15 @@ export function resolveChannelAssistantSelection(
     };
   }
 
+  // A team binding is a valid non-assistant target; the caller resolves the
+  // team itself and must not treat the missing assistant as broken.
+  if (typeof saved.team_id === 'string' && saved.team_id.trim()) {
+    return {
+      assistantId: undefined,
+      hasBrokenSavedAssistant: false,
+    };
+  }
+
   const explicitAssistantId = typeof saved.assistant_id === 'string' ? saved.assistant_id : undefined;
 
   if (explicitAssistantId && assistants.some((assistant) => assistant.id === explicitAssistantId)) {
@@ -69,4 +78,18 @@ export function buildChannelAssistantBinding(assistant: Assistant): IChannelAssi
   return {
     assistant_id: assistant.id,
   };
+}
+
+export function buildChannelTeamBinding(team: { id: string; name: string }): IChannelAssistantBindingWrite {
+  return {
+    team_id: team.id,
+    name: team.name,
+  };
+}
+
+/** Saved team target id, when the channel is bound to a team. */
+export function resolveChannelTeamId(saved: ChannelAssistantBinding): string | undefined {
+  if (!saved || typeof saved.team_id !== 'string') return undefined;
+  const teamId = saved.team_id.trim();
+  return teamId ? teamId : undefined;
 }

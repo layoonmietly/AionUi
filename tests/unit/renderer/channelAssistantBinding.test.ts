@@ -7,9 +7,11 @@
 import type { Assistant } from '@/common/types/agent/assistantTypes';
 import {
   buildChannelAssistantBinding,
+  buildChannelTeamBinding,
   getDefaultChannelAssistant,
   resolveChannelAssistantId,
   resolveChannelAssistantSelection,
+  resolveChannelTeamId,
 } from '@/renderer/components/settings/SettingsModal/contents/channels/assistantBinding';
 import { describe, expect, it } from 'vitest';
 
@@ -83,6 +85,23 @@ describe('channel assistant binding helpers', () => {
   it('serializes only assistant identity for new channel bindings', () => {
     expect(buildChannelAssistantBinding(assistants[1])).toEqual({
       assistant_id: 'bare-claude',
+    });
+  });
+
+  it('treats a team binding as a valid non-assistant target', () => {
+    expect(resolveChannelAssistantSelection({ team_id: 'team-1' }, assistants)).toEqual({
+      assistantId: undefined,
+      hasBrokenSavedAssistant: false,
+    });
+    expect(resolveChannelTeamId({ team_id: ' team-1 ' })).toBe('team-1');
+    expect(resolveChannelTeamId({ assistant_id: 'bare-claude' })).toBeUndefined();
+    expect(resolveChannelTeamId(undefined)).toBeUndefined();
+  });
+
+  it('serializes team identity for new channel bindings', () => {
+    expect(buildChannelTeamBinding({ id: 'team-1', name: 'Research' })).toEqual({
+      team_id: 'team-1',
+      name: 'Research',
     });
   });
 });
