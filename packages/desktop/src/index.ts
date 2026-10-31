@@ -544,9 +544,16 @@ const createWindow = ({ showOnReady = true }: { showOnReady?: boolean } = {}): v
 
   // Initialize auto-updater service (skip when disabled via env, e.g. E2E / CI)
   // 初始化自动更新服务（通过环境变量禁用时跳过，例如 E2E / CI 场景）
+  // Local-source builds must never check or install official releases. Opt back
+  // in with AIONUI_LOCAL_SOURCE_BUILD=0 if official updates are ever wanted.
+  // 本地源码构建默认关闭官方更新检查；如需官方更新，显式设置 AIONUI_LOCAL_SOURCE_BUILD=0。
+  const localSourceBuild = process.env.AIONUI_LOCAL_SOURCE_BUILD !== '0';
   const isCiRuntime = process.env.CI === 'true' || process.env.CI === '1' || process.env.GITHUB_ACTIONS === 'true';
   const disableAutoUpdater =
-    process.env.AIONUI_DISABLE_AUTO_UPDATE === '1' || process.env.AIONUI_E2E_TEST === '1' || isCiRuntime;
+    localSourceBuild ||
+    process.env.AIONUI_DISABLE_AUTO_UPDATE === '1' ||
+    process.env.AIONUI_E2E_TEST === '1' ||
+    isCiRuntime;
   if (!disableAutoUpdater) {
     Promise.all([import('./process/services/autoUpdaterService'), import('./process/bridge/updateBridge')])
       .then(([{ autoUpdaterService }, { createAutoUpdateStatusBroadcast }]) => {

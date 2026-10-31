@@ -27,6 +27,12 @@ import { autoUpdaterService } from '../services/autoUpdaterService';
 import { consumeInstallerLastFailure } from '../services/installerLastFailure';
 
 /** Lazily loads i18n to avoid pulling in initStorage chain at module load time */
+/**
+ * Local-source builds must never consult the official update feed. Set
+ * `AIONUI_LOCAL_SOURCE_BUILD=0` to opt back into official update checks.
+ */
+const localSourceBuild = process.env.AIONUI_LOCAL_SOURCE_BUILD !== '0';
+
 let _i18nCache: Promise<typeof import('../services/i18n')> | null = null;
 const getI18n = async () => {
   if (!_i18nCache) {
@@ -674,6 +680,9 @@ export function initUpdateBridge(): void {
 
   ipcBridge.update.check.provider(
     async (params): Promise<{ success: boolean; data?: UpdateCheckResult; msg?: string }> => {
+      if (localSourceBuild) {
+        return { success: false, msg: 'Update checks are disabled in this local-source build' };
+      }
       try {
         const repo = resolveRepo(params?.repo);
         const currentVersion = app.getVersion();
@@ -805,6 +814,9 @@ export function initUpdateBridge(): void {
       data?: { updateInfo?: { version: string; releaseDate?: string; releaseNotes?: string } };
       msg?: string;
     }> => {
+      if (localSourceBuild) {
+        return { success: false, msg: 'Update checks are disabled in this local-source build' };
+      }
       try {
         // Set prerelease preference before checking
         const includePrerelease = Boolean(params?.includePrerelease);
